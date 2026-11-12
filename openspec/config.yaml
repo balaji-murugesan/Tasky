@@ -1,0 +1,29 @@
+schema: spec-driven
+
+# Constraints an agent cannot infer from the code. Kept short on purpose.
+context: |
+  Tasky is a learning sandbox for an autonomous delivery loop: spec -> code -> verify -> screenshots -> PR -> risk-gated auto-merge.
+  Changes are often implemented unattended (GitHub Actions, nightly). Specs must be concrete enough that no clarifying question is needed.
+  Stack: React 18 + Vite (web/), Express + TypeScript (server/), Vitest (unit/API), Playwright (e2e + screenshots).
+  "Done" is defined in CLAUDE.md -> Definition of Done. The risk policy lives in risk-policy.json.
+
+rules:
+  proposal:
+    - State what is out of scope.
+    - Include a "Risk" line predicting low / medium / high per risk-policy.json and why.
+    - Name the source of the request (issue number, chat thread, or email) in the first paragraph.
+  specs:
+    - Every requirement needs at least one WHEN/THEN scenario that a Playwright or Vitest test can check directly.
+  tasks:
+    - Keep each task under ~1 hour of agent work.
+    - Always include a task to add or update tests (Vitest for API logic, Playwright for UI behaviour).
+    - If a screen is added or changed, include a task to add or update its entry in screenshots.config.json.
+    - Final task is always "Run npm run verify and npm run screenshots; fix until green".
+
+operations:
+  apply:
+    guidance:
+      - In unattended runs there is nobody to answer questions. If a task is unclear or needs scope beyond the spec, stop, write the question into the PR body, and add the label needs-human instead of guessing.
+  archive:
+    guidance:
+      - Archive only after the PR is merged (the post-merge workflow does this).

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npm ci)",
+      "Bash(npm test)",
+      "Bash(npx openspec *)",
+      "Bash(npx playwright *)",
+      "Bash(npx tsx *)",
+      "Bash(bash scripts/*)",
+      "Bash(node scripts/*)",
+      "Bash(curl -s localhost:*)",
+      "Bash(curl -s -X POST localhost:*)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git switch *)",
+      "Bash(git push -u origin agent/*)",
+      "Bash(gh issue *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr comment *)",
+      "Edit(web/**)",
+      "Edit(server/**)",
+      "Edit(e2e/**)",
+      "Edit(openspec/**)",
+      "Edit(screenshots.config.json)",
+      "Edit(artifacts/**)"
+    ],
+    "deny": [
+      "Bash(gh pr merge *)",
+      "Bash(git push --force*)",
+      "Bash(git push origin main*)",
+      "Edit(.github/**)",
+      "Edit(risk-policy.json)",
+      "Edit(scripts/risk-classify.mjs)",
+      "Read(.env*)"
+    ]
+  }
+}

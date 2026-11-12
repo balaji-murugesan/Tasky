@@ -1,0 +1,28 @@
+{
+  "$comment": "Pages the screenshot script captures. Agents add an entry here whenever a change adds or alters a screen. Steps run in order before the capture.",
+  "viewports": [
+    { "name": "desktop", "width": 1280, "height": 800 },
+    { "name": "mobile", "width": 390, "height": 844 }
+  ],
+  "pages": [
+    { "name": "home-empty", "path": "/", "reset": true, "steps": [] },
+    {
+      "name": "home-with-tasks",
+      "path": "/",
+      "reset": true,
+      "steps": [
+        { "fill": "New task", "value": "Draft the OpenSpec proposal" },
+        { "click": "Add" },
+        { "fill": "New task", "value": "Ship it" },
+        { "click": "Add" },
+        { "check": "Complete Draft the OpenSpec proposal" }
+      ]
+    },
+    {
+      "name": "validation-error",
+      "path": "/",
+      "reset": true,
+      "steps": [{ "click": "Add" }]
+    }
+  ]
+}

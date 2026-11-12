@@ -1,0 +1,72 @@
+# Continuous QA on main: deterministic suites every push, exploratory Claude QA nightly.
+# Findings become `bug` issues; unambiguous ones get `agent:ready`, so tonight's
+# agent-build run fixes them. That is the self-healing part of the loop.
+name: qa
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "30 18 * * *"   # 00:00 IST, before the 02:00 build run
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci && npx playwright install --with-deps chromium
+      - run: npm run verify
+      - name: Red main → urgent issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create main-broken --color B60205 --force >/dev/null
+          gh issue list --label main-broken --state open --json number -q '.[0].number' | grep -q . || \
+          gh issue create --title "main is red after ${GITHUB_SHA::7}" --label main-broken,bug,needs-human \
+            --body "verify failed on main: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  explore:
+    if: github.event_name != 'push'
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci && npx playwright install --with-deps chromium
+      - uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}   # app token so `agent:ready` labels trigger agent-build
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ steps.app.outputs.token }}
+          prompt: |
+            Run the app-qa skill against main of ${{ github.repository }}. Do not change any committed files.
+          claude_args: |
+            --model claude-sonnet-5-5
+            --max-turns 80
+            --allowedTools "Read,Write,Glob,Grep,Skill,Bash(npm *),Bash(npx *),Bash(node *),Bash(curl *),Bash(gh issue *),Bash(gh label *),Bash(mkdir *),Bash(cat *),Bash(bash scripts/run-app.sh *)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: qa-evidence, path: artifacts/, retention-days: 7 }

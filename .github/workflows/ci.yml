@@ -1,0 +1,158 @@
+# The verifiable gate every PR (human or agent) must pass.
+#   verify  → typecheck, unit, e2e, screenshots (posted to the PR)
+#   risk    → classify with risk-policy.json, label, gate, enable auto-merge for low risk
+#   review  → Claude reviews medium/high PRs against their OpenSpec change (comments only)
+# Branch protection on main should require: `verify` and `risk-gate`.
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # Label changes only need the risk gate re-evaluated, not the whole suite.
+    if: github.event_name == 'pull_request' && github.event.action != 'labeled' && github.event.action != 'unlabeled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write        # push PNGs to the pr-screenshots branch
+      pull-requests: write   # sticky screenshot comment
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Typecheck + unit + e2e
+        run: npm run verify
+
+      - name: Validate OpenSpec
+        run: npx openspec validate --all
+
+      - name: Screenshots
+        run: |
+          npm run app:up
+          npm run screenshots
+          npm run app:down
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-${{ github.event.pull_request.number }}
+          path: artifacts/
+          retention-days: 14
+
+      - name: Post screenshots to PR
+        # Forks can't push to this repo; skip there.
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "tasky-bot"
+          git config user.email "tasky-bot@users.noreply.github.com"
+          bash scripts/post-screenshots.sh ${{ github.event.pull_request.number }}
+
+  risk-gate:
+    needs: verify
+    if: always() && (needs.verify.result == 'success' || needs.verify.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      risk: ${{ steps.classify.outputs.risk }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: Classify risk
+        id: classify
+        run: |
+          git fetch -q origin ${{ github.event.pull_request.base.ref }}
+          node scripts/risk-classify.mjs origin/${{ github.event.pull_request.base.ref }} | tee risk.json
+
+      - name: Label PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          RISK: ${{ steps.classify.outputs.risk }}
+        run: |
+          for l in risk:low risk:medium risk:high; do
+            gh label create "$l" --force >/dev/null 2>&1 || true
+            [ "$l" != "risk:$RISK" ] && gh pr edit "$PR" --remove-label "$l" >/dev/null 2>&1 || true
+          done
+          gh pr edit "$PR" --add-label "risk:$RISK"
+
+      - name: Gate
+        # low → passes. medium/high → passes only with an approving human review.
+        # Blocked labels or a draft PR → always fails.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          RISK: ${{ steps.classify.outputs.risk }}
+        run: |
+          labels=$(gh pr view "$PR" --json labels -q '.labels[].name')
+          draft=$(gh pr view "$PR" --json isDraft -q .isDraft)
+          for b in $(jq -r '.blockedLabels[]' risk-policy.json); do
+            if echo "$labels" | grep -qx "$b"; then echo "::error::blocked by label $b"; exit 1; fi
+          done
+          [ "$draft" = "true" ] && { echo "::error::draft PR"; exit 1; }
+          if [ "$RISK" = "low" ]; then echo "low risk → gate open"; exit 0; fi
+          approved=$(gh pr view "$PR" --json reviewDecision -q .reviewDecision)
+          if [ "$approved" = "APPROVED" ]; then echo "$RISK risk, human-approved → gate open"; exit 0; fi
+          echo "::error::$RISK risk needs an approving human review"; exit 1
+
+      - name: Enable auto-merge (low risk only)
+        if: steps.classify.outputs.risk == 'low'
+        env:
+          # A GitHub App token (not GITHUB_TOKEN) so the merge triggers post-merge workflows.
+          GH_TOKEN: ${{ secrets.AGENT_GH_TOKEN || github.token }}
+        run: gh pr merge ${{ github.event.pull_request.number }} --auto --squash --delete-branch
+
+  review:
+    needs: risk-gate
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'labeled' && github.event.action != 'unlabeled' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.risk-gate.outputs.risk != 'low'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}  PR: ${{ github.event.pull_request.number }}
+            This PR was classified ${{ needs.risk-gate.outputs.risk }} risk, so a human must approve it.
+            Help that human: read CLAUDE.md, the PR's OpenSpec change under openspec/changes/, and the diff.
+            Post ONE review comment (gh pr review --comment) covering:
+            1. Does the code implement every WHEN/THEN scenario? Is each one tested?
+            2. Anything outside the spec's scope?
+            3. Why the risk is ${{ needs.risk-gate.outputs.risk }}, and what specifically to double-check.
+            Do not approve, request changes, push, or merge.
+          claude_args: |
+            --max-turns 20
+            --allowedTools "Read,Glob,Grep,Bash(git diff *),Bash(git log *),Bash(gh pr view *),Bash(gh pr diff *),Bash(gh pr review *)"

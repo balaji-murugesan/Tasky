@@ -1,0 +1,39 @@
+{
+  "$comment": "Decides which PRs may auto-merge. First matching rule (top to bottom) that raises risk wins; the PR gets the HIGHEST risk any file triggers. Tune this file, not the script.",
+  "limits": {
+    "low": { "maxFiles": 8, "maxChangedLines": 250 },
+    "medium": { "maxFiles": 25, "maxChangedLines": 800 }
+  },
+  "high": [
+    ".github/**",
+    "risk-policy.json",
+    "scripts/**",
+    ".claude/settings.json",
+    "CLAUDE.md",
+    "package.json",
+    "package-lock.json",
+    "server/src/auth/**",
+    "**/migrations/**",
+    "**/*.sql",
+    "**/.env*",
+    "openspec/specs/**/security*"
+  ],
+  "medium": [
+    "server/src/**",
+    "playwright.config.ts",
+    "vite.config.ts",
+    "web/vite.config.ts",
+    "tsconfig.json"
+  ],
+  "low": [
+    "web/src/**",
+    "e2e/**",
+    "server/test/**",
+    "openspec/**",
+    "screenshots.config.json",
+    "**/*.md",
+    "docs/**"
+  ],
+  "requireTestsWithCodeChange": true,
+  "blockedLabels": ["do-not-merge", "needs-human"]
+}

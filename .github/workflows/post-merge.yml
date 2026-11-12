@@ -1,0 +1,52 @@
+# After an agent PR merges, archive its OpenSpec change so openspec/specs/ stays the
+# source of truth. Done as a tiny follow-up PR (openspec/** only → low risk → auto-merges),
+# so nothing ever pushes straight to protected main.
+name: post-merge
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with: { token: "${{ steps.app.outputs.token }}" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Archive completed changes
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          # A change is complete when every checkbox in its tasks.md is ticked.
+          done=()
+          for d in openspec/changes/*/; do
+            id=$(basename "$d"); [ "$id" = archive ] && continue
+            [ -f "$d/tasks.md" ] || continue
+            grep -q -- '- \[ \]' "$d/tasks.md" || done+=("$id")
+          done
+          [ ${#done[@]} -eq 0 ] && { echo "nothing to archive"; exit 0; }
+
+          git config user.name "tasky-agent[bot]"
+          git config user.email "tasky-agent[bot]@users.noreply.github.com"
+          branch="agent/archive-${GITHUB_SHA::7}"
+          git switch -c "$branch"
+          for id in "${done[@]}"; do npx openspec archive "$id" --yes; done
+          npx openspec validate --all
+          git add openspec && git commit -m "spec: archive ${done[*]}"
+          git push -u origin "$branch"
+          gh pr create --title "spec: archive ${done[*]}" \
+            --body "Automated: merges completed OpenSpec deltas into openspec/specs/." --label source:automation

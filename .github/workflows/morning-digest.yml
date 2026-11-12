@@ -1,0 +1,36 @@
+# "Wake up to 10+ merged PRs": a deterministic morning summary of the last 24 h.
+# Posts to Slack/Teams/Google Chat if DIGEST_WEBHOOK_URL is set, otherwise updates a pinned issue.
+name: morning-digest
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # 08:30 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/digest.sh > digest.md && cat digest.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WEBHOOK: ${{ secrets.DIGEST_WEBHOOK_URL }}
+        run: |
+          if [ -n "$WEBHOOK" ]; then
+            jq -Rs '{text: .}' digest.md | curl -fsS -X POST -H 'Content-Type: application/json' -d @- "$WEBHOOK"
+          else
+            gh label create digest --force >/dev/null
+            n=$(gh issue list --label digest --state open --json number -q '.[0].number')
+            if [ -n "$n" ]; then gh issue comment "$n" --body-file digest.md
+            else gh issue create --title "🌅 Morning digest" --label digest --body-file digest.md; fi
+          fi
